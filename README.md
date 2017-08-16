@@ -18,25 +18,26 @@ BenchmarkRegexpBypass/DotSuffix/pcre-8        	  100000	     41359 ns/op  # PCRE
 BenchmarkRegexpBypass/DotSuffix/rust-8        	20000000	       157 ns/op  # Rust regexp engine
 ```
 
-Here is a non-exhaustive list of patterns supported:
+## Supported patterns
 
- - `^ab` and `ab$` are effectively translated to `strings.HasPrefix` and `strings.HasSuffix`
- - `a.ab$` has a fixed-length size of 4 runes so we can just scan bytes starting at the end of the string.
- - `jpg|png` is a top-level alternation of fixed-length patterns, so they are run separately until one matches
- - `(a*)bb$` has a fixed-length suffix so it is matched first on the string. If it matches, then `(a*)$` is executed by the other matchers on the rest of the string.
- - `[^b]` is a single-character exclusion class, so it has a specific optimization that avoids comparing it to a byte range.
+"Fixed-length" patterns don't contain any of `*`, `+`, `?`: the length of the string they match can be computed at compile-time.
 
-Not currently optimized but maybe in scope:
+Pattern type | Examples | Supported? | Comment
+--- | --- | --- | ---
+Anchored literals | `^ab`, `ab$` | Yes, with `byPassProgLinear` | Effectively translated to `strings.HasPrefix` and `strings.HasSuffix`
+Anchored fixed-length | `^a[^b][0-9]\w`, `a.ab$` | Yes, with `byPassProgLinear` | Because of the anchors we can scan the minimum number of bytes in the string
+Unanchored fixed-length single-step | `a`, `[^b]`, `.` | Yes, with `byPassProgLinear` | String is scanned until a match is found, possibly with `strings.Index`
+Unanchored fixed-length multi-step | `a.b`, `[^a][^b]` | Not yet | May be implemented with limited backtracking
+Top-level alternations of the above | `jpg\|png`, `(?:[a-z]{3}$)\|(?:[0-9]$)` | Yes, with `byPassProgAlternate` | Each part is run with `byPassProgLinear` until one matches
+Fixed-length prefixes or suffixes in any pattern | `(a*)bb$`, `^[0-9](\w?)` | Yes, with `byPassProgFirstPass` | The prefix or suffix is first run through `byPassProgLinear`. If it matches, the rest of the pattern (`(a*)$` & `^(\w?)` in the examples) is then executed by the regular matchers on the rest of the string.
+Capturing groups | `^(ab)` | Not yet |
+Variable-length patterns | `.*`, `.+`, `.?` | No |
+Nested alternations | `a(b.\|c.)` | No | Some might be transformed to fixed-length top-level alternations
+Word boundaries | `\b[a-z]\b` | No |
 
- - Fixed-length unanchored patterns with more than one step (`x.y`) that may need simple backtracking
- - Specific patterns like `[^a]*a` that could use different search algorithms
+Streaming input with `inputReader` is not supported. `[]byte` input with `inputBytes` is not yet supported but could be added.
 
-Out of scope and happily left to the other matchers:
-
- - Patterns with `*`, `+`, `?`, non-standard flags, nested alternations, word boundaries
- - Streaming input with `inputReader`
-
-## What is missing currently but could still be done in the scope of this proposal
+## What is missing currently but could be done in the scope of this proposal
 
  - Add support for `Find`, `Split`, ...
  - Add support for `[]byte` as input (`re.Match()`)
@@ -44,6 +45,7 @@ Out of scope and happily left to the other matchers:
  - Add a simple backtracker for fixed-length unanchored patterns with more than one step (`x.y`)
  - Avoid factoring patterns like `aa|ab` so that we can use `byPassProgAlternate`
  - Fine-tune types & fix struct alignment
+ - Narrow down the exact list of flags that are supported
  - Add benchmarks with re2
  - Compile (?:png|jpg) as a single "multi-literal"
  - Some profiling for micro-optimizations
