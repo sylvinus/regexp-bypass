@@ -226,7 +226,6 @@ func compileByPassPartialSuffix(firstpassprog *byPassProgFirstPass, tree *syntax
 	}
 }
 
-
 // compileParsed is a shorter version of compile() that takes a parsed tree as input
 // TODO: factorize this with the regular compile() function
 func compileParsed(re *syntax.Regexp, longest bool) (*Regexp, error) {

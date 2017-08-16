@@ -1,6 +1,6 @@
 ## Proposal: regexp: Optimize fixed-length patterns
 
-This is a proof-of-concept repository for a proposed improvement to the Go `regexp` package.
+This is a proof-of-concept repository for a proposed improvement to the Go `regexp` package. [View the current patch](https://github.com/sylvinus/regexp-bypass/compare/aec5cc64208771a29c61fa76e80c0dc264c4220f...master)
 
 The `regexp` package already has 3 different matchers (NFA, onepass, backtrack). One of them is selected depending on the pattern to be matched.
 
