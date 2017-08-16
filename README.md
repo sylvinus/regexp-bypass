@@ -37,6 +37,24 @@ Word boundaries | `\b[a-z]\b` | No |
 
 Streaming input with `inputReader` is not supported. `[]byte` input with `inputBytes` is not yet supported but could be added.
 
+## Stats from GitHub
+
+[Steren Giannini](https://github.com/steren) made a [BigQuery](https://gist.github.com/steren/4e8784ba782c624be48f97a4ea808f28) to extract [all regexps](https://gist.github.com/steren/4e8784ba782c624be48f97a4ea808f28) used in Go files on GitHub.
+
+Here are the stats on their support with the current implementation:
+
+```
+Total occurences                    76341
+Invalid                             2545 (3.33%)
+Unsupported                         48006 (62.88%)
+Supported total                     25790 (33.78%)
+ Supported with byPassProgLinear    14714 (19.27%)
+ Supported with byPassProgAlternate 450 (0.59%)
+ Supported with byPassProgFirstPass 10626 (13.92%)
+```
+
+Note that the supported total will grow when we add support for capturing groups and multi-step unanchored patterns.
+
 ## What is missing currently but could be done in the scope of this proposal
 
  - Add support for `Find`, `Split`, ...

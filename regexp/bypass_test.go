@@ -5,6 +5,11 @@
 package regexp
 
 import (
+	"encoding/csv"
+	"os"
+	"reflect"
+	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -37,5 +42,58 @@ func TestByPassCompile(t *testing.T) {
 			t.Errorf("pat: %s should have been bypassed=%t", test.pat, test.isByPass)
 		}
 	}
+
+}
+
+func TestByPassGithubRegexps(t *testing.T) {
+
+	var total, linear, alt, firstpass, supported, unsupported, invalid int
+
+	f, _ := os.Open("testdata/github-regexp.csv")
+	defer f.Close()
+
+	lines, _ := csv.NewReader(f).ReadAll()
+
+	for _, line := range lines {
+		n, _ := strconv.Atoi(line[1])
+		total += n
+		_, err := regexp.Compile(line[0])
+		if err != nil {
+			invalid += n
+			continue
+		}
+
+		re, errb := Compile(line[0])
+		if errb != nil {
+			t.Errorf("Failed to compile in regexp-bypass but not in regexp: ", line[0])
+			continue
+		}
+
+		if re.bypass == nil {
+			unsupported += n
+			continue
+		}
+
+		supported += n
+
+		switch reflect.TypeOf(re.bypass).String() {
+		case "*regexp.byPassProgLinear":
+			linear += n
+		case "*regexp.byPassProgAlternate":
+			alt += n
+		case "*regexp.byPassProgFirstPass":
+			firstpass += n
+		}
+
+	}
+
+	t.Logf("\nStats on %d unique regexps from GitHub for bypass matcher:", len(lines))
+	t.Logf("Total occurences                    %d", total)
+	t.Logf("Invalid                             %d (%0.2f%%)", invalid, float64(invalid*100)/float64(total))
+	t.Logf("Unsupported                         %d (%0.2f%%)", unsupported, float64(unsupported*100)/float64(total))
+	t.Logf("Supported total                     %d (%0.2f%%)", supported, float64(supported*100)/float64(total))
+	t.Logf(" Supported with byPassProgLinear    %d (%0.2f%%)", linear, float64(linear*100)/float64(total))
+	t.Logf(" Supported with byPassProgAlternate %d (%0.2f%%)", alt, float64(alt*100)/float64(total))
+	t.Logf(" Supported with byPassProgFirstPass %d (%0.2f%%)", firstpass, float64(firstpass*100)/float64(total))
 
 }
