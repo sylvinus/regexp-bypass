@@ -1,6 +1,7 @@
 package regexpbypass
 
 import (
+	"fmt"
 	rust "github.com/BurntSushi/rure-go"
 	"github.com/dlclark/regexp2"
 	"github.com/glenn-brown/golang-pkg-pcre/src/pkg/pcre"
@@ -151,5 +152,26 @@ func BenchmarkRegexpBypass(b *testing.B) {
 		// SRE2 was tested but performed much slower than all the implementations, and some patterns
 		// failed to compile at all.
 
+	}
+}
+
+func BenchmarkStringsSuffix(b *testing.B) {
+
+	println("")
+
+	lengths := []int{10, 100, 1000, 1000000, 10000000}
+
+	for _, length := range lengths {
+
+		text := strings.Repeat("a", length)
+
+		b.Run(fmt.Sprintf("%d", length), func(b *testing.B) {
+
+			for i := 0; i < b.N; i++ {
+				if !strings.HasSuffix(text, "a") {
+					panic("")
+				}
+			}
+		})
 	}
 }
