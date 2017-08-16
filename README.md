@@ -60,7 +60,7 @@ The obvious cons of this proposal are:
 
 The pros are:
 
- - Constant-time matching for many simple regexps
+ - Constant-time matching for many simple regexps (relative to the size of the input string)
  - No overhead for regexps that are not supported
  - Go's `regexp` package is usually considered immature performance-wise. This proposal plays a small role in fixing that by adding optimizations that can reasonably be expected from the end-user.
  - This matcher keeps very little state and bypasses the mutex from `regexp.go`
