@@ -4,7 +4,7 @@ This is a proof-of-concept repository for a proposed improvement to the Go `rege
 
 The `regexp` package already has 3 different matchers (NFA, onepass, backtrack). One of them is selected depending on the pattern to be matched.
 
-This proposal adds a [4th matcher](https://github.com/sylvinus/regexp-bypass/blob/master/regexp/bypass.go) named `bypass`. It is optimized for fixed-size patterns like `a.ab$` on strings. It provides near constant-time matching whereas the current matchers from `regexp` perform linearly with the size of the input string. Performance becomes close to what can be achieved with methods like `strings.Index`.
+This proposal adds a [4th matcher](https://github.com/sylvinus/regexp-bypass/blob/master/regexp/bypass.go) named `bypass`. It is optimized for fixed-length patterns like `a.ab$` on strings. It provides near constant-time matching whereas the current matchers from `regexp` perform linearly with the size of the input string. Performance becomes close to what can be achieved with methods like `strings.Index`.
 
 Here is a sample benchmark result of `regexp.MatchString("a.ab$", strings.Repeat("a", 1000) + "b")`. Full benchmark results are attached at the end of this README.
 
@@ -20,8 +20,8 @@ Here is a non-exhaustive list of patterns supported:
 
  - `^ab` and `ab$` are effectively translated to `strings.HasPrefix` and `strings.HasSuffix`
  - `a.ab$` has a fixed-length size of 4 runes so we can just scan bytes starting at the end of the string.
- - `jpg|png` is a top-level alternation of fixed-size patterns, so they are run separately until one matches
- - `(a*)bb$` has a fixed-size suffix so it is matched first on the string. If it matches, then `(a*)` is executed by the other matchers on the rest of the string.
+ - `jpg|png` is a top-level alternation of fixed-length patterns, so they are run separately until one matches
+ - `(a*)bb$` has a fixed-length suffix so it is matched first on the string. If it matches, then `(a*)` is executed by the other matchers on the rest of the string.
  - `[^b]` is a single-character exclusion class, so it has a specific optimization that avoids comparing it to a byte range.
 
 Not currently optimized but maybe in scope:
