@@ -23,7 +23,7 @@ Here is a non-exhaustive list of patterns supported:
  - `^ab` and `ab$` are effectively translated to `strings.HasPrefix` and `strings.HasSuffix`
  - `a.ab$` has a fixed-length size of 4 runes so we can just scan bytes starting at the end of the string.
  - `jpg|png` is a top-level alternation of fixed-length patterns, so they are run separately until one matches
- - `(a*)bb$` has a fixed-length suffix so it is matched first on the string. If it matches, then `(a*)` is executed by the other matchers on the rest of the string.
+ - `(a*)bb$` has a fixed-length suffix so it is matched first on the string. If it matches, then `(a*)$` is executed by the other matchers on the rest of the string.
  - `[^b]` is a single-character exclusion class, so it has a specific optimization that avoids comparing it to a byte range.
 
 Not currently optimized but maybe in scope:
