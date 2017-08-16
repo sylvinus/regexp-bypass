@@ -65,7 +65,7 @@ The pros are:
  - Go's `regexp` package is usually considered immature performance-wise. This proposal plays a small role in fixing that by adding optimizations that can reasonably be expected from the end-user.
  - This matcher keeps very little state and bypasses the mutex from `regexp.go`
  - There are already 3 different matchers in the standard library (4 with the upcoming DFA), so adding a new one for a specific kind of patterns is not surprising.
- - `regexp.MatchString("^ab")` could obviously be rewritten as `strings.HasPrefix("ab")` but sometimes it is not practical because the pattern to be matched is user-supplied or part of a long list of patterns. Examples include interactive log search or lists of paths in HTTP routers.
+ - `regexp.MatchString("(?:png|jpg)$")` could obviously be rewritten as `strings.HasSuffix("png") or strings.HasSuffix("jpg")` but sometimes it is not practical because the pattern to be matched is user-supplied or part of a long list of patterns. Examples include interactive log search or lists of paths in HTTP routers.
  - Limited risk due to exhaustive tests in the standard library and additional fuzzing
 
 Feedback would be highly appreciated!
