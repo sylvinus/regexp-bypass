@@ -323,4 +323,10 @@ BenchmarkRegexpBypass/RouterFastFirstPass/std-8            	  100000	     36023 
 BenchmarkRegexpBypass/RouterFastFirstPass/pcre-8           	 3000000	       851 ns/op
 BenchmarkRegexpBypass/RouterFastFirstPass/regexp2-8        	  500000	      6578 ns/op
 
+pattern: ^([^/]*)/index\.[a-z]{3}$
+BenchmarkRegexpBypass/RouterFastFirstPassN/bypass-8         	30000000	       102 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/std-8            	  100000	     36414 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/pcre-8           	  200000	     21449 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/regexp2-8        	   30000	     78986 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/rust-8           	 1000000	      2626 ns/op
 ```
