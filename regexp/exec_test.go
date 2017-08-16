@@ -8,7 +8,7 @@ import (
 	"bufio"
 	"compress/bzip2"
 	"fmt"
-	"internal/testenv"
+	// "internal/testenv"
 	"io"
 	"os"
 	"path/filepath"
@@ -660,7 +660,7 @@ func makeText(n int) []byte {
 }
 
 func BenchmarkMatch(b *testing.B) {
-	isRaceBuilder := strings.HasSuffix(testenv.Builder(), "-race")
+	isRaceBuilder := false // strings.HasSuffix(testenv.Builder(), "-race")
 
 	for _, data := range benchData {
 		r := MustCompile(data.re)
@@ -682,7 +682,7 @@ func BenchmarkMatch(b *testing.B) {
 }
 
 func BenchmarkMatch_onepass_regex(b *testing.B) {
-	isRaceBuilder := strings.HasSuffix(testenv.Builder(), "-race")
+	isRaceBuilder := false // strings.HasSuffix(testenv.Builder(), "-race")
 	r := MustCompile(`(?s)\A.*\z`)
 	if r.get().op == notOnePass {
 		b.Fatalf("want onepass regex, but %q is not onepass", r)

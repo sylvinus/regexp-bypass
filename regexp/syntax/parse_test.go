@@ -74,6 +74,8 @@ var parseTests = []parseTest{
 	{`abc`, `str{abc}`},
 	{`abc|def`, `alt{str{abc}str{def}}`},
 	{`abc|def|ghi`, `alt{str{abc}str{def}str{ghi}}`},
+	{`.*a$`, `cat{star{dot{}}lit{a}eol{}}`},
+
 
 	// Posix and Perl extensions
 	{`[[:lower:]]`, `cc{0x61-0x7a}`},

@@ -91,6 +91,7 @@ type regexpRO struct {
 	expr           string         // as passed to Compile
 	prog           *syntax.Prog   // compiled program
 	onepass        *onePassProg   // onepass program or nil
+	bypass         byPassProg     // bypass program or nil
 	prefix         string         // required prefix in unanchored matches
 	prefixBytes    []byte         // prefix, as a []byte
 	prefixComplete bool           // prefix is the entire regexp
@@ -184,6 +185,7 @@ func compile(expr string, mode syntax.Flags, longest bool) (*Regexp, error) {
 			expr:        expr,
 			prog:        prog,
 			onepass:     compileOnePass(prog),
+			bypass:      compileByPass(re),
 			numSubexp:   maxCap,
 			subexpNames: capNames,
 			cond:        prog.StartCond(),
@@ -432,6 +434,10 @@ func (re *Regexp) MatchReader(r io.RuneReader) bool {
 
 // MatchString reports whether the Regexp matches the string s.
 func (re *Regexp) MatchString(s string) bool {
+
+	if re.bypass != notByPass {
+		return re.bypass.MatchString(s)
+	}
 	return re.doMatch(nil, nil, s)
 }
 
