@@ -4,7 +4,7 @@ This is a proof-of-concept repository for a proposed improvement to the Go `rege
 
 The `regexp` package already has 3 different matchers (NFA, onepass, backtrack). One of them is selected depending on the pattern to be matched.
 
-This proposal adds a 4th matcher named `bypass`. It is optimized for fixed-size patterns like `a.ab$` on strings. It provides near constant-time matching whereas the current matchers from `regexp` perform linearly with the size of the input string. Performance becomes close to what can be achieved with methods like `strings.Index`.
+This proposal adds a [4th matcher](https://github.com/sylvinus/regexp-bypass/blob/master/regexp/bypass.go) named `bypass`. It is optimized for fixed-size patterns like `a.ab$` on strings. It provides near constant-time matching whereas the current matchers from `regexp` perform linearly with the size of the input string. Performance becomes close to what can be achieved with methods like `strings.Index`.
 
 Here is a sample benchmark result of `regexp.MatchString("a.ab$", strings.Repeat("a", 1000) + "b")`. Full benchmark results are attached at the end of this README.
 
@@ -95,12 +95,12 @@ Benchmarks with an input string of length N=~1000 characters to detect linear be
 $ make benchlong
 
 pattern: ^xxy
-BenchmarkRegexpBypass/Prefix/native-8         	300000000	         9.22 ns/op
-BenchmarkRegexpBypass/Prefix/bypass-8         	100000000	        38.7 ns/op
-BenchmarkRegexpBypass/Prefix/std-8            	20000000	       142 ns/op
-BenchmarkRegexpBypass/Prefix/pcre-8           	20000000	       204 ns/op
-BenchmarkRegexpBypass/Prefix/regexp2-8        	 2000000	      1817 ns/op
-BenchmarkRegexpBypass/Prefix/rust-8           	20000000	       142 ns/op
+BenchmarkRegexpBypass/Prefix/native-8         	300000000	         9.22 ns/op  # strings.HasPrefix
+BenchmarkRegexpBypass/Prefix/bypass-8         	100000000	        38.7 ns/op   # New matcher implementation
+BenchmarkRegexpBypass/Prefix/std-8            	20000000	       142 ns/op     # Go's current standard library
+BenchmarkRegexpBypass/Prefix/pcre-8           	20000000	       204 ns/op     # PCRE with github.com/glenn-brown/golang-pkg-pcre/src/pkg/pcre
+BenchmarkRegexpBypass/Prefix/regexp2-8        	 2000000	      1817 ns/op     # Regexp2 github.com/dlclark/regexp2
+BenchmarkRegexpBypass/Prefix/rust-8           	20000000	       142 ns/op     # Rust regexp engine github.com/BurntSushi/rure-go
 
 pattern: xx
 BenchmarkRegexpBypass/Literal/native-8        	100000000	        24.0 ns/op
