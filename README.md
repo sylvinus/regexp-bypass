@@ -1,8 +1,10 @@
 ## Proposal: regexp: Optimize fixed-length patterns
 
-This is a proof-of-concept repository for a [proposed improvement](https://github.com/golang/go/issues/21463) to the Go `regexp` package. [View the current patch](https://github.com/sylvinus/regexp-bypass/compare/aec5cc64208771a29c61fa76e80c0dc264c4220f...master)
+This is a proof-of-concept repository for a [proposed improvement](https://github.com/golang/go/issues/21463) to the Go `regexp` package.
 
-The `regexp` package already has 3 different matchers (NFA, onepass, backtrack). One of them is selected depending on the pattern to be matched.
+[View the current patch](https://github.com/sylvinus/regexp-bypass/compare/aec5cc64208771a29c61fa76e80c0dc264c4220f...master)
+
+The `regexp` package has 3 different matchers (NFA, onepass, backtrack). One of them is selected depending on the pattern to be matched.
 
 This proposal adds a [4th matcher](https://github.com/sylvinus/regexp-bypass/blob/master/regexp/bypass.go) named `bypass`. It is optimized for fixed-length patterns like `a.ab$` on strings. It provides near constant-time matching whereas the current matchers from `regexp` perform linearly with the size of the input string. Performance becomes close to what can be achieved with methods like `strings.Index`.
 
