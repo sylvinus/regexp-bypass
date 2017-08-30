@@ -1,8 +1,16 @@
 bench:
-	go test -bench=. -benchtime=10ms
+	go test -v -bench=. -benchtime=10ms
 
 benchlong:
-	go test -bench=. -benchtime=2s
+	go test -v -bench=. -benchtime=2s
+
+benchprofile:
+	go test -bench=BenchmarkRegexpBypass -benchtime=10s -cpuprofile=cpuprofile.prof -memprofile=memprofile.mprof
+	go tool pprof regexp-bypass.test cpuprofile.prof || true
+	go tool pprof regexp-bypass.test memprofile.mprof || true
+	rm cpuprofile.prof
+	rm memprofile.mprof
+	rm regexp-bypass.test
 
 test:
 	go test ./regexp -v

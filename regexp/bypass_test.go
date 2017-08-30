@@ -22,13 +22,13 @@ var compileByPassTests = []struct {
 	{`[^a]`, true},
 	{`.`, true},
 	{`.+`, false},
-	{`a.`, false},
+	{`a.`, true},
 	{`^a.`, true},
 	{`a{2}`, true},
 	{`(a)`, false},
 	{`x.[^z]yz$`, true},
 	{`^(?:(?:a(?:a.)))$`, true},
-	{`(?:a(?:a.))`, false},
+	{`(?:a(?:a.))`, true},
 	{`\A(?:(?:a(?:a.)))\z`, true},
 	{`^aa.*`, true},
 }
@@ -47,7 +47,7 @@ func TestByPassCompile(t *testing.T) {
 
 func TestByPassGithubRegexps(t *testing.T) {
 
-	var total, linear, alt, firstpass, supported, unsupported, invalid int
+	var total, linearUnanchored, linearAnchored, alt, firstpass, supported, unsupported, invalid, unmatchable int
 
 	f, _ := os.Open("testdata/github-regexp.csv")
 	defer f.Close()
@@ -77,23 +77,29 @@ func TestByPassGithubRegexps(t *testing.T) {
 		supported += n
 
 		switch reflect.TypeOf(re.bypass).String() {
-		case "*regexp.byPassProgLinear":
-			linear += n
+		case "*regexp.byPassProgAnchored":
+			linearAnchored += n
+		case "*regexp.byPassProgUnanchored":
+			linearUnanchored += n
 		case "*regexp.byPassProgAlternate":
 			alt += n
 		case "*regexp.byPassProgFirstPass":
 			firstpass += n
+		case "*regexp.byPassProgUnmatchable":
+			unmatchable += n
 		}
 
 	}
 
 	t.Logf("\nStats on %d unique regexps from GitHub for bypass matcher:", len(lines))
-	t.Logf("Total occurences                    %d", total)
-	t.Logf("Invalid                             %d (%0.2f%%)", invalid, float64(invalid*100)/float64(total))
-	t.Logf("Unsupported                         %d (%0.2f%%)", unsupported, float64(unsupported*100)/float64(total))
-	t.Logf("Supported total                     %d (%0.2f%%)", supported, float64(supported*100)/float64(total))
-	t.Logf(" Supported with byPassProgLinear    %d (%0.2f%%)", linear, float64(linear*100)/float64(total))
-	t.Logf(" Supported with byPassProgAlternate %d (%0.2f%%)", alt, float64(alt*100)/float64(total))
-	t.Logf(" Supported with byPassProgFirstPass %d (%0.2f%%)", firstpass, float64(firstpass*100)/float64(total))
+	t.Logf("Total occurences                                %d", total)
+	t.Logf("Invalid                                         %d (%0.2f%%)", invalid, float64(invalid*100)/float64(total))
+	t.Logf("Unsupported                                     %d (%0.2f%%)", unsupported, float64(unsupported*100)/float64(total))
+	t.Logf("Supported total                                 %d (%0.2f%%)", supported, float64(supported*100)/float64(total))
+	t.Logf(" Supported with byPassProgAnchored              %d (%0.2f%%)", linearAnchored, float64(linearAnchored*100)/float64(total))
+	t.Logf(" Supported with byPassProgUnanchored            %d (%0.2f%%)", linearUnanchored, float64(linearUnanchored*100)/float64(total))
+	t.Logf(" Supported with byPassProgAlternate             %d (%0.2f%%)", alt, float64(alt*100)/float64(total))
+	t.Logf(" Supported with byPassProgFirstPass             %d (%0.2f%%)", firstpass, float64(firstpass*100)/float64(total))
+	t.Logf(" Supported with byPassProgUnmatchable           %d (%0.2f%%)", unmatchable, float64(unmatchable*100)/float64(total))
 
 }

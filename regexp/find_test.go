@@ -159,6 +159,7 @@ var findTests = []FindTest{
 	{`[^\w\W]`, "0", nil},
 	{`^..`, "a☺", build(1, 0, 4)},
 	{`..$`, "☺", nil},
+	{`a.a`, "aa☺a", build(1, 1, 6)},
 	{`^ab(?:[^c]*)`, "abd", build(1, 0, 3)},
 
 	// can backslash-escape any punctuation

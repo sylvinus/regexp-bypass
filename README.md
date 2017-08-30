@@ -24,10 +24,10 @@ BenchmarkRegexpBypass/DotSuffix/rust-8        	20000000	       157 ns/op  # Rust
 
 Pattern type | Examples | Supported? | Comment
 --- | --- | --- | ---
-Anchored literals | `^ab`, `ab$` | Yes, with `byPassProgLinear` | Effectively translated to `strings.HasPrefix` and `strings.HasSuffix`
-Anchored fixed-length | `^a[^b][0-9]\w`, `a.ab$` | Yes, with `byPassProgLinear` | Because of the anchors we can scan the minimum number of bytes in the string
-Unanchored fixed-length single-step | `a`, `[^b]`, `.` | Yes, with `byPassProgLinear` | String is scanned until a match is found, possibly with `strings.Index`
-Unanchored fixed-length multi-step | `a.b`, `[^a][^b]` | Not yet | May be implemented with limited backtracking
+Anchored literals | `^ab`, `ab$` | Yes, with `byPassProgAnchored` | Effectively translated to `strings.HasPrefix` and `strings.HasSuffix`
+Anchored fixed-length | `^a[^b][0-9]\w`, `a.ab$` | Yes, with `byPassProgAnchored` | Because of the anchors we can scan the minimum number of bytes in the string
+Unanchored fixed-length single-step | `a`, `[^b]`, `.` | Yes, with `byPassProgUnanchored` | String is scanned until a match is found, possibly with `strings.Index`
+Unanchored fixed-length multi-step | `a.b`, `[^a][^b]` | Yes, with `byPassProgUnanchored` | Implemented with simple backtracking
 Top-level alternations of the above | `jpg\|png`, `(?:[a-z]{3}$)\|(?:[0-9]$)` | Yes, with `byPassProgAlternate` | Each part is run with `byPassProgLinear` until one matches
 Fixed-length prefixes or suffixes in any pattern | `(a*)bb$`, `^[0-9](\w?)` | Yes, with `byPassProgFirstPass` | The prefix or suffix is first run through `byPassProgLinear`. If it matches, the rest of the pattern (`(a*)$` & `^(\w?)` in the examples) is then executed by the regular matchers on the rest of the string.
 Capturing groups | `^(ab)` | Not yet |
@@ -44,13 +44,15 @@ Streaming input with `inputReader` is not supported. `[]byte` input with `inputB
 Here are the stats on their support with the current implementation:
 
 ```
-Total occurences                    76341
-Invalid                             2545 (3.33%)
-Unsupported                         48006 (62.88%)
-Supported total                     25790 (33.78%)
- Supported with byPassProgLinear    14714 (19.27%)
- Supported with byPassProgAlternate 450 (0.59%)
- Supported with byPassProgFirstPass 10626 (13.92%)
+Total occurences                                76341
+Invalid                                         2545 (3.33%)
+Unsupported                                     45922 (60.15%)
+Supported total                                 27874 (36.51%)
+ Supported with byPassProgAnchored              6833 (8.95%)
+ Supported with byPassProgUnanchored            9876 (12.94%)
+ Supported with byPassProgAlternate             490 (0.64%)
+ Supported with byPassProgFirstPass             10626 (13.92%)
+ Supported with byPassProgUnmatchable           49 (0.06%)
 ```
 
 Note that the supported total will grow when we add support for capturing groups and multi-step unanchored patterns.
@@ -60,7 +62,6 @@ Note that the supported total will grow when we add support for capturing groups
  - Add support for `Find`, `Split`, ...
  - Add support for `[]byte` as input (`re.Match()`)
  - Add support for capturing groups
- - Add a simple backtracker for fixed-length unanchored patterns with more than one step (`x.y`)
  - Avoid factoring patterns like `aa|ab` so that we can use `byPassProgAlternate`
  - Fine-tune types & fix struct alignment
  - Narrow down the exact list of flags that are supported
@@ -68,6 +69,7 @@ Note that the supported total will grow when we add support for capturing groups
  - Compile (?:png|jpg) as a single "multi-literal"
  - Some profiling for micro-optimizations
  - Understand why `^(.*)$` is very slow with the standard library (see `Router` benchmarks below) and making our `firstpass` optimization actually slower for now
+ - Optimize class matching
 
 ## Pros & cons
 
@@ -116,239 +118,350 @@ Benchmarks with an input string of length N=~1000 characters to detect linear be
 ```
 $ make benchlong
 
-pattern: ^xxy
-BenchmarkRegexpBypass/Prefix/native-8         	300000000	         9.22 ns/op  # strings.HasPrefix
-BenchmarkRegexpBypass/Prefix/bypass-8         	100000000	        38.7 ns/op   # New matcher implementation
-BenchmarkRegexpBypass/Prefix/std-8            	20000000	       142 ns/op     # Go's current standard library
-BenchmarkRegexpBypass/Prefix/pcre-8           	20000000	       204 ns/op     # PCRE with github.com/glenn-brown/golang-pkg-pcre/src/pkg/pcre
-BenchmarkRegexpBypass/Prefix/regexp2-8        	 2000000	      1817 ns/op     # Regexp2 github.com/dlclark/regexp2
-BenchmarkRegexpBypass/Prefix/rust-8           	20000000	       142 ns/op     # Rust regexp engine github.com/BurntSushi/rure-go
+Pattern: ^xxy
+BenchmarkRegexpBypass/Prefix/bypass-8         	  500000	        34.4 ns/op   # New matcher implementation
+BenchmarkRegexpBypass/Prefix/native-8         	 2000000	         8.68 ns/op  # strings.HasPrefix
+BenchmarkRegexpBypass/Prefix/std-8            	  100000	       138 ns/op     # Go's current standard library
+BenchmarkRegexpBypass/Prefix/stddfa-8         	  100000	       134 ns/op     # DFA branch from http://github.com/matloob/regexp
+BenchmarkRegexpBypass/Prefix/glob-8           	 2000000	         7.32 ns/op  # Equivalent glob pattern with http://github.com/gobwas/glob
+BenchmarkRegexpBypass/Prefix/pcre-8           	  100000	       186 ns/op     # PCRE http://github.com/glenn-brown/golang-pkg-pcre/src/pkg/pcre
+BenchmarkRegexpBypass/Prefix/regexp2-8        	   10000	      1480 ns/op     # http://github.com/dlclark/regexp2
+BenchmarkRegexpBypass/Prefix/rust-8           	  100000	       128 ns/op     # Rust regexp engine http://github.com/BurntSushi/rure-go
 
-pattern: xx
-BenchmarkRegexpBypass/Literal/native-8        	100000000	        24.0 ns/op
-BenchmarkRegexpBypass/Literal/bypass-8        	100000000	        47.7 ns/op
-BenchmarkRegexpBypass/Literal/std-8           	20000000	       145 ns/op
-BenchmarkRegexpBypass/Literal/pcre-8          	20000000	       220 ns/op
-BenchmarkRegexpBypass/Literal/regexp2-8       	 2000000	      1941 ns/op
-BenchmarkRegexpBypass/Literal/rust-8          	20000000	       158 ns/op
+Pattern: xx
+BenchmarkRegexpBypass/Literal/bypass-8        	  500000	        28.1 ns/op
+BenchmarkRegexpBypass/Literal/native-8        	 1000000	        21.7 ns/op
+BenchmarkRegexpBypass/Literal/std-8           	  100000	       139 ns/op
+BenchmarkRegexpBypass/Literal/stddfa-8        	  100000	       143 ns/op
+BenchmarkRegexpBypass/Literal/glob-8          	  500000	        31.2 ns/op
+BenchmarkRegexpBypass/Literal/pcre-8          	   50000	       213 ns/op
+BenchmarkRegexpBypass/Literal/regexp2-8       	   10000	      1734 ns/op
+BenchmarkRegexpBypass/Literal/rust-8          	  100000	       144 ns/op
 
-pattern: xxy
-BenchmarkRegexpBypass/LiteralN/native-8       	20000000	       216 ns/op
-BenchmarkRegexpBypass/LiteralN/bypass-8       	10000000	       243 ns/op
-BenchmarkRegexpBypass/LiteralN/std-8          	10000000	       286 ns/op
-BenchmarkRegexpBypass/LiteralN/pcre-8         	 5000000	       687 ns/op
-BenchmarkRegexpBypass/LiteralN/regexp2-8      	  500000	      6086 ns/op
-BenchmarkRegexpBypass/LiteralN/rust-8         	20000000	       157 ns/op
+Pattern: xxy
+BenchmarkRegexpBypass/LiteralN/bypass-8       	  100000	       205 ns/op
+BenchmarkRegexpBypass/LiteralN/native-8       	  100000	       197 ns/op
+BenchmarkRegexpBypass/LiteralN/std-8          	   50000	       301 ns/op
+BenchmarkRegexpBypass/LiteralN/stddfa-8       	   50000	       276 ns/op
+BenchmarkRegexpBypass/LiteralN/glob-8         	  100000	       202 ns/op
+BenchmarkRegexpBypass/LiteralN/pcre-8         	   20000	       625 ns/op
+BenchmarkRegexpBypass/LiteralN/regexp2-8      	    2000	      5383 ns/op
+BenchmarkRegexpBypass/LiteralN/rust-8         	  100000	       153 ns/op
 
-pattern: xxy$
-BenchmarkRegexpBypass/Suffix/native-8         	300000000	         9.69 ns/op
-BenchmarkRegexpBypass/Suffix/bypass-8         	50000000	        53.8 ns/op
-BenchmarkRegexpBypass/Suffix/std-8            	10000000	       463 ns/op
-BenchmarkRegexpBypass/Suffix/pcre-8           	  100000	     37899 ns/op
-BenchmarkRegexpBypass/Suffix/regexp2-8        	  500000	      6527 ns/op
-BenchmarkRegexpBypass/Suffix/rust-8           	20000000	       156 ns/op
+Pattern: xxy$
+BenchmarkRegexpBypass/Suffix/bypass-8         	  300000	        47.3 ns/op
+BenchmarkRegexpBypass/Suffix/native-8         	 2000000	         8.98 ns/op
+BenchmarkRegexpBypass/Suffix/std-8            	   30000	       466 ns/op
+BenchmarkRegexpBypass/Suffix/stddfa-8         	   30000	       425 ns/op
+BenchmarkRegexpBypass/Suffix/glob-8           	 2000000	         8.47 ns/op
+BenchmarkRegexpBypass/Suffix/pcre-8           	     500	     35238 ns/op
+BenchmarkRegexpBypass/Suffix/regexp2-8        	    3000	      6142 ns/op
+BenchmarkRegexpBypass/Suffix/rust-8           	  100000	       130 ns/op
 
-pattern: xxy$
-BenchmarkRegexpBypass/SuffixN/native-8        	300000000	         9.68 ns/op
-BenchmarkRegexpBypass/SuffixN/bypass-8        	50000000	        51.9 ns/op
-BenchmarkRegexpBypass/SuffixN/std-8           	10000000	       385 ns/op
-BenchmarkRegexpBypass/SuffixN/pcre-8          	 5000000	       790 ns/op
-BenchmarkRegexpBypass/SuffixN/regexp2-8       	  500000	      6368 ns/op
-BenchmarkRegexpBypass/SuffixN/rust-8          	20000000	       152 ns/op
+Pattern: xxy$
+BenchmarkRegexpBypass/SuffixN/bypass-8        	  300000	        48.2 ns/op
+BenchmarkRegexpBypass/SuffixN/native-8        	 1000000	        10.5 ns/op
+BenchmarkRegexpBypass/SuffixN/std-8           	   50000	       398 ns/op
+BenchmarkRegexpBypass/SuffixN/stddfa-8        	   30000	       403 ns/op
+BenchmarkRegexpBypass/SuffixN/glob-8          	 1000000	        11.1 ns/op
+BenchmarkRegexpBypass/SuffixN/pcre-8          	   20000	       800 ns/op
+BenchmarkRegexpBypass/SuffixN/regexp2-8       	    3000	      6480 ns/op
+BenchmarkRegexpBypass/SuffixN/rust-8          	  100000	       139 ns/op
 
-pattern: ^xxxxy$
-BenchmarkRegexpBypass/Exact/native-8          	1000000000	         4.05 ns/op
-BenchmarkRegexpBypass/Exact/bypass-8          	300000000	         8.50 ns/op
-BenchmarkRegexpBypass/Exact/std-8             	30000000	        85.0 ns/op
-BenchmarkRegexpBypass/Exact/pcre-8            	20000000	       215 ns/op
-BenchmarkRegexpBypass/Exact/regexp2-8         	 2000000	      1904 ns/op
-BenchmarkRegexpBypass/Exact/rust-8            	20000000	       167 ns/op
+Pattern: ^xxxxy$
+BenchmarkRegexpBypass/Exact/bypass-8          	 2000000	         7.71 ns/op
+BenchmarkRegexpBypass/Exact/native-8          	 3000000	         3.72 ns/op
+BenchmarkRegexpBypass/Exact/std-8             	  200000	        74.5 ns/op
+BenchmarkRegexpBypass/Exact/stddfa-8          	  200000	        86.3 ns/op
+BenchmarkRegexpBypass/Exact/glob-8            	 2000000	         5.92 ns/op
+BenchmarkRegexpBypass/Exact/pcre-8            	  100000	       208 ns/op
+BenchmarkRegexpBypass/Exact/regexp2-8         	   10000	      1628 ns/op
+BenchmarkRegexpBypass/Exact/rust-8            	  100000	       169 ns/op
 
-pattern: x{2}
-BenchmarkRegexpBypass/Repeat/bypass-8         	50000000	        70.8 ns/op
-BenchmarkRegexpBypass/Repeat/std-8            	20000000	       166 ns/op
-BenchmarkRegexpBypass/Repeat/pcre-8           	 5000000	       578 ns/op
-BenchmarkRegexpBypass/Repeat/regexp2-8        	 1000000	      4157 ns/op
-BenchmarkRegexpBypass/Repeat/rust-8           	20000000	       174 ns/op
+Pattern: x{2}
+BenchmarkRegexpBypass/Repeat/bypass-8         	  200000	        65.6 ns/op
+BenchmarkRegexpBypass/Repeat/std-8            	  100000	       165 ns/op
+BenchmarkRegexpBypass/Repeat/stddfa-8         	  100000	       169 ns/op
+BenchmarkRegexpBypass/Repeat/glob-8           	  300000	        50.6 ns/op
+BenchmarkRegexpBypass/Repeat/pcre-8           	   20000	       677 ns/op
+BenchmarkRegexpBypass/Repeat/regexp2-8        	    5000	      3880 ns/op
+BenchmarkRegexpBypass/Repeat/rust-8           	  100000	       170 ns/op
 
-pattern: x.xy$
-BenchmarkRegexpBypass/DotSuffix/bypass-8      	30000000	       109 ns/op
-BenchmarkRegexpBypass/DotSuffix/std-8         	   50000	     69882 ns/op
-BenchmarkRegexpBypass/DotSuffix/pcre-8        	  100000	     41359 ns/op
-BenchmarkRegexpBypass/DotSuffix/regexp2-8     	   20000	    119813 ns/op
-BenchmarkRegexpBypass/DotSuffix/rust-8        	20000000	       157 ns/op
+Pattern: x.xy$
+BenchmarkRegexpBypass/DotSuffix/bypass-8      	  200000	       119 ns/op
+BenchmarkRegexpBypass/DotSuffix/std-8         	     200	     69215 ns/op
+BenchmarkRegexpBypass/DotSuffix/stddfa-8      	     200	     74374 ns/op
+BenchmarkRegexpBypass/DotSuffix/glob-8        	     200	     56987 ns/op
+BenchmarkRegexpBypass/DotSuffix/pcre-8        	     300	     45922 ns/op
+BenchmarkRegexpBypass/DotSuffix/regexp2-8     	     100	    132169 ns/op
+BenchmarkRegexpBypass/DotSuffix/rust-8        	  100000	       138 ns/op
 
-pattern: x.xy$
-BenchmarkRegexpBypass/DotSuffixN/bypass-8     	100000000	        46.0 ns/op
-BenchmarkRegexpBypass/DotSuffixN/std-8        	   50000	     70092 ns/op
-BenchmarkRegexpBypass/DotSuffixN/pcre-8       	  100000	     40759 ns/op
-BenchmarkRegexpBypass/DotSuffixN/regexp2-8    	   30000	    121721 ns/op
-BenchmarkRegexpBypass/DotSuffixN/rust-8       	20000000	       166 ns/op
+Pattern: x.xy$
+BenchmarkRegexpBypass/DotSuffixN/bypass-8     	  500000	        41.1 ns/op
+BenchmarkRegexpBypass/DotSuffixN/std-8        	     200	     66794 ns/op
+BenchmarkRegexpBypass/DotSuffixN/stddfa-8     	     200	     72523 ns/op
+BenchmarkRegexpBypass/DotSuffixN/glob-8       	     300	     59528 ns/op
+BenchmarkRegexpBypass/DotSuffixN/pcre-8       	     500	     39492 ns/op
+BenchmarkRegexpBypass/DotSuffixN/regexp2-8    	     100	    106040 ns/op
+BenchmarkRegexpBypass/DotSuffixN/rust-8       	  100000	       153 ns/op
 
-pattern: .*yxx$
-BenchmarkRegexpBypass/DotStarSuffix/bypass-8  	50000000	        55.8 ns/op
-BenchmarkRegexpBypass/DotStarSuffix/std-8     	   50000	     52516 ns/op
-BenchmarkRegexpBypass/DotStarSuffix/pcre-8    	  200000	     15466 ns/op
-BenchmarkRegexpBypass/DotStarSuffix/regexp2-8 	     200	  19131652 ns/op
-BenchmarkRegexpBypass/DotStarSuffix/rust-8    	20000000	       164 ns/op
+Pattern: .*yxx$
+BenchmarkRegexpBypass/DotStarSuffix/bypass-8  	  300000	        53.9 ns/op
+BenchmarkRegexpBypass/DotStarSuffix/std-8     	     300	     51752 ns/op
+BenchmarkRegexpBypass/DotStarSuffix/stddfa-8  	     200	     50095 ns/op
+BenchmarkRegexpBypass/DotStarSuffix/glob-8    	  200000	        53.2 ns/op
+BenchmarkRegexpBypass/DotStarSuffix/pcre-8    	    1000	     14832 ns/op
+BenchmarkRegexpBypass/DotStarSuffix/regexp2-8 	       1	  20395684 ns/op
+BenchmarkRegexpBypass/DotStarSuffix/rust-8    	  100000	       175 ns/op
 
-pattern: ^xxxx.*yxx$
-BenchmarkRegexpBypass/PrefixDotStarSuffix/bypass-8         	20000000	       120 ns/op
-BenchmarkRegexpBypass/PrefixDotStarSuffix/std-8            	  100000	     37506 ns/op
-BenchmarkRegexpBypass/PrefixDotStarSuffix/pcre-8           	  200000	     14080 ns/op
-BenchmarkRegexpBypass/PrefixDotStarSuffix/regexp2-8        	  100000	     40032 ns/op
-BenchmarkRegexpBypass/PrefixDotStarSuffix/rust-8           	 1000000	      2518 ns/op
+Pattern: ^xxxx.*yxx$
+BenchmarkRegexpBypass/PrefixDotStarSuffix/bypass-8         	  100000	       127 ns/op
+BenchmarkRegexpBypass/PrefixDotStarSuffix/std-8            	     500	     32925 ns/op
+BenchmarkRegexpBypass/PrefixDotStarSuffix/stddfa-8         	     500	     37920 ns/op
+BenchmarkRegexpBypass/PrefixDotStarSuffix/glob-8           	     500	     25808 ns/op
+BenchmarkRegexpBypass/PrefixDotStarSuffix/pcre-8           	    1000	     13135 ns/op
+BenchmarkRegexpBypass/PrefixDotStarSuffix/regexp2-8        	     500	     38218 ns/op
+BenchmarkRegexpBypass/PrefixDotStarSuffix/rust-8           	    5000	      2362 ns/op
 
-pattern: ^xxxy.*
-BenchmarkRegexpBypass/PrefixDotStar/bypass-8               	50000000	        47.7 ns/op
-BenchmarkRegexpBypass/PrefixDotStar/std-8                  	20000000	       152 ns/op
-BenchmarkRegexpBypass/PrefixDotStar/pcre-8                 	20000000	       212 ns/op
-BenchmarkRegexpBypass/PrefixDotStar/regexp2-8              	 2000000	      1897 ns/op
-BenchmarkRegexpBypass/PrefixDotStar/rust-8                 	20000000	       166 ns/op
+Pattern: ^xxxy.*
+BenchmarkRegexpBypass/PrefixDotStar/bypass-8               	  300000	        42.8 ns/op
+BenchmarkRegexpBypass/PrefixDotStar/std-8                  	  100000	       147 ns/op
+BenchmarkRegexpBypass/PrefixDotStar/stddfa-8               	  100000	       156 ns/op
+BenchmarkRegexpBypass/PrefixDotStar/glob-8                 	  100000	       226 ns/op
+BenchmarkRegexpBypass/PrefixDotStar/pcre-8                 	  100000	       235 ns/op
+BenchmarkRegexpBypass/PrefixDotStar/regexp2-8              	   10000	      1522 ns/op
+BenchmarkRegexpBypass/PrefixDotStar/rust-8                 	  100000	       170 ns/op
 
-pattern: x.y
-BenchmarkRegexpBypass/LateDot/bypass-8                     	   50000	     61497 ns/op
-BenchmarkRegexpBypass/LateDot/std-8                        	   50000	     59360 ns/op
-BenchmarkRegexpBypass/LateDot/pcre-8                       	  100000	     37885 ns/op
-BenchmarkRegexpBypass/LateDot/regexp2-8                    	   20000	    119353 ns/op
-BenchmarkRegexpBypass/LateDot/rust-8                       	 1000000	      2570 ns/op
+Pattern: x.y
+BenchmarkRegexpBypass/LateDot/bypass-8                     	  200000	       104 ns/op
+BenchmarkRegexpBypass/LateDot/std-8                        	     300	     57363 ns/op
+BenchmarkRegexpBypass/LateDot/stddfa-8                     	     200	     65799 ns/op
+BenchmarkRegexpBypass/LateDot/glob-8                       	     300	     60086 ns/op
+BenchmarkRegexpBypass/LateDot/pcre-8                       	     500	     35793 ns/op
+BenchmarkRegexpBypass/LateDot/regexp2-8                    	     100	    106637 ns/op
+BenchmarkRegexpBypass/LateDot/rust-8                       	   10000	      2764 ns/op
 
-pattern: x.y
-BenchmarkRegexpBypass/LateDotN/bypass-8                    	   50000	     60496 ns/op
-BenchmarkRegexpBypass/LateDotN/std-8                       	   50000	     60218 ns/op
-BenchmarkRegexpBypass/LateDotN/pcre-8                      	 5000000	       692 ns/op
-BenchmarkRegexpBypass/LateDotN/regexp2-8                   	   20000	    118873 ns/op
-BenchmarkRegexpBypass/LateDotN/rust-8                      	 1000000	      2554 ns/op
+Pattern: x.y
+BenchmarkRegexpBypass/LateDotN/bypass-8                    	  200000	        61.0 ns/op
+BenchmarkRegexpBypass/LateDotN/std-8                       	     300	     58058 ns/op
+BenchmarkRegexpBypass/LateDotN/stddfa-8                    	     300	     61222 ns/op
+BenchmarkRegexpBypass/LateDotN/glob-8                      	     300	     59346 ns/op
+BenchmarkRegexpBypass/LateDotN/pcre-8                      	   20000	       724 ns/op
+BenchmarkRegexpBypass/LateDotN/regexp2-8                   	     100	    116886 ns/op
+BenchmarkRegexpBypass/LateDotN/rust-8                      	    5000	      2751 ns/op
 
-pattern: [0-9a-z]
-BenchmarkRegexpBypass/LateClass/bypass-8                   	  500000	      6667 ns/op
-BenchmarkRegexpBypass/LateClass/std-8                      	  100000	     32792 ns/op
-BenchmarkRegexpBypass/LateClass/pcre-8                     	  100000	     28316 ns/op
-BenchmarkRegexpBypass/LateClass/regexp2-8                  	  200000	     18434 ns/op
-BenchmarkRegexpBypass/LateClass/rust-8                     	 1000000	      2534 ns/op
+Pattern: x.y
+BenchmarkRegexpBypass/LateDotHard/bypass-8                 	    1000	     17863 ns/op
+BenchmarkRegexpBypass/LateDotHard/std-8                    	     500	     27023 ns/op
+BenchmarkRegexpBypass/LateDotHard/stddfa-8                 	     500	     31670 ns/op
+BenchmarkRegexpBypass/LateDotHard/glob-8                   	     300	     39981 ns/op
+BenchmarkRegexpBypass/LateDotHard/pcre-8                   	    1000	     18614 ns/op
+BenchmarkRegexpBypass/LateDotHard/regexp2-8                	     300	     58746 ns/op
+BenchmarkRegexpBypass/LateDotHard/rust-8                   	    5000	      2886 ns/op
 
-pattern: a.+b.+c
-BenchmarkRegexpBypass/LateFail/bypass-8                    	  200000	     15945 ns/op
-BenchmarkRegexpBypass/LateFail/std-8                       	  200000	     16327 ns/op
-BenchmarkRegexpBypass/LateFail/pcre-8                      	     500	   7407837 ns/op
-BenchmarkRegexpBypass/LateFail/regexp2-8                   	     200	  17600353 ns/op
-BenchmarkRegexpBypass/LateFail/rust-8                      	 5000000	       671 ns/op
+Pattern: x.y
+BenchmarkRegexpBypass/LateDotHardN/bypass-8                	    1000	     19399 ns/op
+BenchmarkRegexpBypass/LateDotHardN/std-8                   	     500	     29259 ns/op
+BenchmarkRegexpBypass/LateDotHardN/stddfa-8                	     500	     29612 ns/op
+BenchmarkRegexpBypass/LateDotHardN/glob-8                  	     300	     39950 ns/op
+BenchmarkRegexpBypass/LateDotHardN/pcre-8                  	    1000	     19235 ns/op
+BenchmarkRegexpBypass/LateDotHardN/regexp2-8               	     300	     57233 ns/op
+BenchmarkRegexpBypass/LateDotHardN/rust-8                  	    5000	      2425 ns/op
 
-pattern: x.+y
-BenchmarkRegexpBypass/LateDotPlus/bypass-8                 	   30000	     81439 ns/op
-BenchmarkRegexpBypass/LateDotPlus/std-8                    	   30000	     81715 ns/op
-BenchmarkRegexpBypass/LateDotPlus/pcre-8                   	     500	   6785593 ns/op
-BenchmarkRegexpBypass/LateDotPlus/regexp2-8                	     200	  16680981 ns/op
-BenchmarkRegexpBypass/LateDotPlus/rust-8                   	 1000000	      2615 ns/op
+Pattern: x....y
+BenchmarkRegexpBypass/LateDotHarder/bypass-8               	    1000	     16617 ns/op
+BenchmarkRegexpBypass/LateDotHarder/std-8                  	     200	     78353 ns/op
+BenchmarkRegexpBypass/LateDotHarder/stddfa-8               	     200	     71691 ns/op
+BenchmarkRegexpBypass/LateDotHarder/glob-8                 	     200	    101385 ns/op
+BenchmarkRegexpBypass/LateDotHarder/pcre-8                 	     500	     44048 ns/op
+BenchmarkRegexpBypass/LateDotHarder/regexp2-8              	     100	    122998 ns/op
+BenchmarkRegexpBypass/LateDotHarder/rust-8                 	    5000	      2407 ns/op
 
-pattern: x.+y
-BenchmarkRegexpBypass/LateDotPlusN/bypass-8                	   30000	     81512 ns/op
-BenchmarkRegexpBypass/LateDotPlusN/std-8                   	   30000	     81933 ns/op
-BenchmarkRegexpBypass/LateDotPlusN/pcre-8                  	     500	   6879664 ns/op
-BenchmarkRegexpBypass/LateDotPlusN/regexp2-8               	     200	  16822620 ns/op
-BenchmarkRegexpBypass/LateDotPlusN/rust-8                  	 1000000	      2665 ns/op
+Pattern: ☺....y
+BenchmarkRegexpBypass/LateDotUnicode/bypass-8              	     500	     29597 ns/op
+BenchmarkRegexpBypass/LateDotUnicode/std-8                 	     100	    107833 ns/op
+BenchmarkRegexpBypass/LateDotUnicode/stddfa-8              	     100	    113315 ns/op
+BenchmarkRegexpBypass/LateDotUnicode/regexp2-8             	     100	    123206 ns/op
+BenchmarkRegexpBypass/LateDotUnicode/rust-8                	    2000	      6485 ns/op
 
-pattern: [^b]
-BenchmarkRegexpBypass/NegativeClass/bypass-8               	 5000000	       735 ns/op
-BenchmarkRegexpBypass/NegativeClass/std-8                  	  100000	     33254 ns/op
-BenchmarkRegexpBypass/NegativeClass/pcre-8                 	  100000	     29988 ns/op
-BenchmarkRegexpBypass/NegativeClass/regexp2-8              	  200000	     18552 ns/op
-BenchmarkRegexpBypass/NegativeClass/rust-8                 	 1000000	      2555 ns/op
+Pattern: a.+b.+c
+BenchmarkRegexpBypass/LateFail/bypass-8                    	    1000	     15707 ns/op
+BenchmarkRegexpBypass/LateFail/std-8                       	    1000	     17666 ns/op
+BenchmarkRegexpBypass/LateFail/stddfa-8                    	    1000	     17619 ns/op
+BenchmarkRegexpBypass/LateFail/glob-8                      	     500	     23591 ns/op
+BenchmarkRegexpBypass/LateFail/pcre-8                      	       2	   6658587 ns/op
+BenchmarkRegexpBypass/LateFail/regexp2-8                   	       1	  15896990 ns/op
+BenchmarkRegexpBypass/LateFail/rust-8                      	   20000	       600 ns/op
 
-pattern: [^b]
-BenchmarkRegexpBypass/NegativeClassN/bypass-8              	 5000000	       718 ns/op
-BenchmarkRegexpBypass/NegativeClassN/std-8                 	  100000	     33642 ns/op
-BenchmarkRegexpBypass/NegativeClassN/pcre-8                	  100000	     30110 ns/op
-BenchmarkRegexpBypass/NegativeClassN/regexp2-8             	  200000	     18011 ns/op
-BenchmarkRegexpBypass/NegativeClassN/rust-8                	 1000000	      2604 ns/op
+Pattern: x.+y
+BenchmarkRegexpBypass/LateDotPlus/bypass-8                 	     200	     75648 ns/op
+BenchmarkRegexpBypass/LateDotPlus/std-8                    	     200	     86419 ns/op
+BenchmarkRegexpBypass/LateDotPlus/stddfa-8                 	     200	     82993 ns/op
+BenchmarkRegexpBypass/LateDotPlus/glob-8                   	     100	    170544 ns/op
+BenchmarkRegexpBypass/LateDotPlus/pcre-8                   	       2	   6565913 ns/op
+BenchmarkRegexpBypass/LateDotPlus/regexp2-8                	       1	  16193609 ns/op
+BenchmarkRegexpBypass/LateDotPlus/rust-8                   	    5000	      2448 ns/op
 
-pattern: [^b]$
-BenchmarkRegexpBypass/NegativeClassSuffixN/bypass-8        	100000000	        30.7 ns/op
-BenchmarkRegexpBypass/NegativeClassSuffixN/std-8           	   50000	     55941 ns/op
-BenchmarkRegexpBypass/NegativeClassSuffixN/pcre-8          	  100000	     33119 ns/op
-BenchmarkRegexpBypass/NegativeClassSuffixN/regexp2-8       	   30000	    119525 ns/op
-BenchmarkRegexpBypass/NegativeClassSuffixN/rust-8          	20000000	       168 ns/op
+Pattern: x.+y
+BenchmarkRegexpBypass/LateDotPlusN/bypass-8                	     200	     79618 ns/op
+BenchmarkRegexpBypass/LateDotPlusN/std-8                   	     200	     75249 ns/op
+BenchmarkRegexpBypass/LateDotPlusN/stddfa-8                	     200	     90363 ns/op
+BenchmarkRegexpBypass/LateDotPlusN/glob-8                  	     100	    181905 ns/op
+BenchmarkRegexpBypass/LateDotPlusN/pcre-8                  	       2	   7292755 ns/op
+BenchmarkRegexpBypass/LateDotPlusN/regexp2-8               	       1	  17288483 ns/op
+BenchmarkRegexpBypass/LateDotPlusN/rust-8                  	    5000	      2710 ns/op
 
-pattern: [^a][^b]
-BenchmarkRegexpBypass/NegativeClass2/bypass-8              	   50000	     51650 ns/op
-BenchmarkRegexpBypass/NegativeClass2/std-8                 	   50000	     51212 ns/op
-BenchmarkRegexpBypass/NegativeClass2/pcre-8                	  100000	     35892 ns/op
-BenchmarkRegexpBypass/NegativeClass2/regexp2-8             	   20000	    130207 ns/op
-BenchmarkRegexpBypass/NegativeClass2/rust-8                	 1000000	      2544 ns/op
+Pattern: [0-9a-z]
+BenchmarkRegexpBypass/LateClass/bypass-8                   	    5000	      3361 ns/op
+BenchmarkRegexpBypass/LateClass/std-8                      	     500	     31498 ns/op
+BenchmarkRegexpBypass/LateClass/stddfa-8                   	     500	     31792 ns/op
+BenchmarkRegexpBypass/LateClass/pcre-8                     	     500	     25573 ns/op
+BenchmarkRegexpBypass/LateClass/regexp2-8                  	    1000	     13540 ns/op
+BenchmarkRegexpBypass/LateClass/rust-8                     	   10000	      2758 ns/op
 
-pattern: a$a$
-BenchmarkRegexpBypass/Unmatchable/bypass-8                 	500000000	         7.17 ns/op
-BenchmarkRegexpBypass/Unmatchable/std-8                    	   50000	     62295 ns/op
-BenchmarkRegexpBypass/Unmatchable/pcre-8                   	  100000	     33563 ns/op
-BenchmarkRegexpBypass/Unmatchable/regexp2-8                	   30000	    101360 ns/op
-BenchmarkRegexpBypass/Unmatchable/rust-8                   	20000000	       168 ns/op
+Pattern: xxxx[0-9a-z]
+BenchmarkRegexpBypass/LateClassHard/bypass-8               	    2000	      7868 ns/op
+BenchmarkRegexpBypass/LateClassHard/std-8                  	    1000	     21710 ns/op
+BenchmarkRegexpBypass/LateClassHard/stddfa-8               	     500	     23715 ns/op
+BenchmarkRegexpBypass/LateClassHard/pcre-8                 	     500	     29782 ns/op
+BenchmarkRegexpBypass/LateClassHard/regexp2-8              	     500	     24984 ns/op
+BenchmarkRegexpBypass/LateClassHard/rust-8                 	    5000	      2798 ns/op
 
-pattern: abc|abd
-BenchmarkRegexpBypass/SimpleAltPrefix/bypass-8             	  100000	     38079 ns/op
-BenchmarkRegexpBypass/SimpleAltPrefix/std-8                	  100000	     37399 ns/op
-BenchmarkRegexpBypass/SimpleAltPrefix/pcre-8               	  100000	     29498 ns/op
-BenchmarkRegexpBypass/SimpleAltPrefix/regexp2-8            	   50000	     73445 ns/op
-BenchmarkRegexpBypass/SimpleAltPrefix/rust-8               	 1000000	      2504 ns/op
+Pattern: [0-9a-z]{5}
+BenchmarkRegexpBypass/LateClassHarder/bypass-8             	     500	     43753 ns/op
+BenchmarkRegexpBypass/LateClassHarder/std-8                	     200	     64930 ns/op
+BenchmarkRegexpBypass/LateClassHarder/stddfa-8             	     200	     67180 ns/op
+BenchmarkRegexpBypass/LateClassHarder/pcre-8               	     500	     35226 ns/op
+BenchmarkRegexpBypass/LateClassHarder/regexp2-8            	     100	    143314 ns/op
+BenchmarkRegexpBypass/LateClassHarder/rust-8               	    5000	      2846 ns/op
 
-pattern: png|jpg
-BenchmarkRegexpBypass/SimpleAlt/bypass-8                   	30000000	        82.0 ns/op
-BenchmarkRegexpBypass/SimpleAlt/std-8                      	   50000	     53849 ns/op
-BenchmarkRegexpBypass/SimpleAlt/pcre-8                     	  100000	     42187 ns/op
-BenchmarkRegexpBypass/SimpleAlt/regexp2-8                  	  200000	     17376 ns/op
-BenchmarkRegexpBypass/SimpleAlt/rust-8                     	10000000	       341 ns/op
+Pattern: [^b]
+BenchmarkRegexpBypass/NegativeClass/bypass-8               	   20000	       799 ns/op
+BenchmarkRegexpBypass/NegativeClass/std-8                  	     500	     29913 ns/op
+BenchmarkRegexpBypass/NegativeClass/stddfa-8               	     500	     29681 ns/op
+BenchmarkRegexpBypass/NegativeClass/glob-8                 	    5000	      3556 ns/op
+BenchmarkRegexpBypass/NegativeClass/pcre-8                 	     500	     32610 ns/op
+BenchmarkRegexpBypass/NegativeClass/regexp2-8              	    1000	     14334 ns/op
+BenchmarkRegexpBypass/NegativeClass/rust-8                 	    5000	      2686 ns/op
 
-pattern: png|jpg
-BenchmarkRegexpBypass/SimpleAltN/bypass-8                  	20000000	       139 ns/op
-BenchmarkRegexpBypass/SimpleAltN/std-8                     	   50000	     55150 ns/op
-BenchmarkRegexpBypass/SimpleAltN/pcre-8                    	 5000000	       723 ns/op
-BenchmarkRegexpBypass/SimpleAltN/regexp2-8                 	  200000	     17021 ns/op
-BenchmarkRegexpBypass/SimpleAltN/rust-8                    	10000000	       338 ns/op
+Pattern: [^b]
+BenchmarkRegexpBypass/NegativeClassN/bypass-8              	   20000	       873 ns/op
+BenchmarkRegexpBypass/NegativeClassN/std-8                 	     500	     32551 ns/op
+BenchmarkRegexpBypass/NegativeClassN/stddfa-8              	     500	     36151 ns/op
+BenchmarkRegexpBypass/NegativeClassN/glob-8                	    5000	      3259 ns/op
+BenchmarkRegexpBypass/NegativeClassN/pcre-8                	     500	     30482 ns/op
+BenchmarkRegexpBypass/NegativeClassN/regexp2-8             	    1000	     14101 ns/op
+BenchmarkRegexpBypass/NegativeClassN/rust-8                	   10000	      2583 ns/op
 
-pattern: (?:png|jpg)$
-BenchmarkRegexpBypass/SimpleSuffixAlt/bypass-8             	   50000	     55871 ns/op
-BenchmarkRegexpBypass/SimpleSuffixAlt/std-8                	   50000	     55329 ns/op
-BenchmarkRegexpBypass/SimpleSuffixAlt/pcre-8               	   50000	     50039 ns/op
-BenchmarkRegexpBypass/SimpleSuffixAlt/regexp2-8            	  200000	     17375 ns/op
-BenchmarkRegexpBypass/SimpleSuffixAlt/rust-8               	20000000	       151 ns/op
+Pattern: [^b]$
+BenchmarkRegexpBypass/NegativeClassSuffixN/bypass-8        	  500000	        30.6 ns/op
+BenchmarkRegexpBypass/NegativeClassSuffixN/std-8           	     300	     41114 ns/op
+BenchmarkRegexpBypass/NegativeClassSuffixN/stddfa-8        	     300	     61502 ns/op
+BenchmarkRegexpBypass/NegativeClassSuffixN/glob-8          	     500	     25574 ns/op
+BenchmarkRegexpBypass/NegativeClassSuffixN/pcre-8          	     500	     35580 ns/op
+BenchmarkRegexpBypass/NegativeClassSuffixN/regexp2-8       	     100	    104536 ns/op
+BenchmarkRegexpBypass/NegativeClassSuffixN/rust-8          	  100000	       163 ns/op
 
-pattern: (?:png$)|(?:jpg$)
-BenchmarkRegexpBypass/SimpleAltSuffix/bypass-8             	50000000	        57.8 ns/op
-BenchmarkRegexpBypass/SimpleAltSuffix/std-8                	   50000	     55472 ns/op
-BenchmarkRegexpBypass/SimpleAltSuffix/pcre-8               	   50000	     54576 ns/op
-BenchmarkRegexpBypass/SimpleAltSuffix/regexp2-8            	  200000	     17256 ns/op
-BenchmarkRegexpBypass/SimpleAltSuffix/rust-8               	20000000	       147 ns/op
+Pattern: [^a][^b]
+BenchmarkRegexpBypass/NegativeClass2/bypass-8              	    1000	     16108 ns/op
+BenchmarkRegexpBypass/NegativeClass2/std-8                 	     300	     57757 ns/op
+BenchmarkRegexpBypass/NegativeClass2/stddfa-8              	     300	     57009 ns/op
+BenchmarkRegexpBypass/NegativeClass2/glob-8                	     300	     40766 ns/op
+BenchmarkRegexpBypass/NegativeClass2/pcre-8                	     500	     33185 ns/op
+BenchmarkRegexpBypass/NegativeClass2/regexp2-8             	     100	    106490 ns/op
+BenchmarkRegexpBypass/NegativeClass2/rust-8                	    5000	      2773 ns/op
 
-pattern: [^a]*a
-BenchmarkRegexpBypass/CharExclude/bypass-8                 	  100000	     27710 ns/op
-BenchmarkRegexpBypass/CharExclude/std-8                    	  100000	     27675 ns/op
-BenchmarkRegexpBypass/CharExclude/pcre-8                   	 5000000	       747 ns/op
-BenchmarkRegexpBypass/CharExclude/regexp2-8                	  500000	      6447 ns/op
-BenchmarkRegexpBypass/CharExclude/rust-8                   	 1000000	      2533 ns/op
+Pattern: a$a$
+BenchmarkRegexpBypass/Unmatchable/bypass-8                 	 3000000	         6.78 ns/op
+BenchmarkRegexpBypass/Unmatchable/std-8                    	     300	     57765 ns/op
+BenchmarkRegexpBypass/Unmatchable/stddfa-8                 	     200	     70359 ns/op
+BenchmarkRegexpBypass/Unmatchable/pcre-8                   	     500	     32670 ns/op
+BenchmarkRegexpBypass/Unmatchable/regexp2-8                	     100	    106580 ns/op
+BenchmarkRegexpBypass/Unmatchable/rust-8                   	  100000	       167 ns/op
 
-pattern: ^(.*)$
-BenchmarkRegexpBypass/RouterSlow/bypass-8                  	  100000	     29002 ns/op
-BenchmarkRegexpBypass/RouterSlow/std-8                     	  100000	     26753 ns/op
-BenchmarkRegexpBypass/RouterSlow/pcre-8                    	 1000000	      2342 ns/op
-BenchmarkRegexpBypass/RouterSlow/regexp2-8                 	  500000	      6460 ns/op
-BenchmarkRegexpBypass/RouterSlow/rust-8                    	 1000000	      2589 ns/op
+Pattern: abc|abd
+BenchmarkRegexpBypass/SimpleAltPrefix/bypass-8             	    2000	     14311 ns/op
+BenchmarkRegexpBypass/SimpleAltPrefix/std-8                	     500	     34378 ns/op
+BenchmarkRegexpBypass/SimpleAltPrefix/stddfa-8             	     500	     44655 ns/op
+BenchmarkRegexpBypass/SimpleAltPrefix/glob-8               	   30000	       659 ns/op
+BenchmarkRegexpBypass/SimpleAltPrefix/pcre-8               	     500	     31229 ns/op
+BenchmarkRegexpBypass/SimpleAltPrefix/regexp2-8            	     200	     66690 ns/op
+BenchmarkRegexpBypass/SimpleAltPrefix/rust-8               	   10000	      2368 ns/op
 
-pattern: ^(.*)/index\.[a-z]{3}$
-BenchmarkRegexpBypass/RouterSlowFirstPass/bypass-8         	  100000	     28802 ns/op
-BenchmarkRegexpBypass/RouterSlowFirstPass/std-8            	  200000	     21837 ns/op
-BenchmarkRegexpBypass/RouterSlowFirstPass/pcre-8           	 1000000	      2632 ns/op
-BenchmarkRegexpBypass/RouterSlowFirstPass/regexp2-8        	  500000	      7370 ns/op
-BenchmarkRegexpBypass/RouterSlowFirstPass/rust-8           	 1000000	      2557 ns/op
+Pattern: png|jpg
+BenchmarkRegexpBypass/SimpleAlt/bypass-8                   	  300000	        62.2 ns/op
+BenchmarkRegexpBypass/SimpleAlt/std-8                      	     200	     58183 ns/op
+BenchmarkRegexpBypass/SimpleAlt/stddfa-8                   	     300	     56126 ns/op
+BenchmarkRegexpBypass/SimpleAlt/glob-8                     	  100000	       195 ns/op
+BenchmarkRegexpBypass/SimpleAlt/pcre-8                     	     500	     44139 ns/op
+BenchmarkRegexpBypass/SimpleAlt/regexp2-8                  	    1000	     17955 ns/op
+BenchmarkRegexpBypass/SimpleAlt/rust-8                     	   50000	       348 ns/op
 
-pattern: ^([^/]*)/index\.[a-z]{3}$
-BenchmarkRegexpBypass/RouterFastFirstPass/bypass-8         	  100000	     36118 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPass/std-8            	  100000	     36023 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPass/pcre-8           	 3000000	       851 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPass/regexp2-8        	  500000	      6578 ns/op
+Pattern: png|jpg
+BenchmarkRegexpBypass/SimpleAltN/bypass-8                  	  200000	       100 ns/op
+BenchmarkRegexpBypass/SimpleAltN/std-8                     	     300	     50876 ns/op
+BenchmarkRegexpBypass/SimpleAltN/stddfa-8                  	     300	     50976 ns/op
+BenchmarkRegexpBypass/SimpleAltN/glob-8                    	  100000	       185 ns/op
+BenchmarkRegexpBypass/SimpleAltN/pcre-8                    	   20000	       650 ns/op
+BenchmarkRegexpBypass/SimpleAltN/regexp2-8                 	    1000	     15948 ns/op
+BenchmarkRegexpBypass/SimpleAltN/rust-8                    	   50000	       355 ns/op
 
-pattern: ^([^/]*)/index\.[a-z]{3}$
-BenchmarkRegexpBypass/RouterFastFirstPassN/bypass-8         	30000000	       102 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPassN/std-8            	  100000	     36414 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPassN/pcre-8           	  200000	     21449 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPassN/regexp2-8        	   30000	     78986 ns/op
-BenchmarkRegexpBypass/RouterFastFirstPassN/rust-8           	 1000000	      2626 ns/op
+Pattern: (?:png|jpg)$
+BenchmarkRegexpBypass/SimpleSuffixAlt/bypass-8             	     300	     53622 ns/op
+BenchmarkRegexpBypass/SimpleSuffixAlt/std-8                	     300	     54620 ns/op
+BenchmarkRegexpBypass/SimpleSuffixAlt/stddfa-8             	     300	     52643 ns/op
+BenchmarkRegexpBypass/SimpleSuffixAlt/glob-8               	  100000	       189 ns/op
+BenchmarkRegexpBypass/SimpleSuffixAlt/pcre-8               	     300	     54433 ns/op
+BenchmarkRegexpBypass/SimpleSuffixAlt/regexp2-8            	    1000	     14755 ns/op
+BenchmarkRegexpBypass/SimpleSuffixAlt/rust-8               	  100000	       142 ns/op
+
+Pattern: (?:png$)|(?:jpg$)
+BenchmarkRegexpBypass/SimpleAltSuffix/bypass-8             	  300000	        52.2 ns/op
+BenchmarkRegexpBypass/SimpleAltSuffix/std-8                	     300	     55278 ns/op
+BenchmarkRegexpBypass/SimpleAltSuffix/stddfa-8             	     300	     49597 ns/op
+BenchmarkRegexpBypass/SimpleAltSuffix/glob-8               	  100000	       199 ns/op
+BenchmarkRegexpBypass/SimpleAltSuffix/pcre-8               	     300	     53032 ns/op
+BenchmarkRegexpBypass/SimpleAltSuffix/regexp2-8            	    1000	     14994 ns/op
+BenchmarkRegexpBypass/SimpleAltSuffix/rust-8               	  100000	       156 ns/op
+
+Pattern: [^a]*a
+BenchmarkRegexpBypass/CharExclude/bypass-8                 	     500	     26639 ns/op
+BenchmarkRegexpBypass/CharExclude/std-8                    	     500	     27210 ns/op
+BenchmarkRegexpBypass/CharExclude/stddfa-8                 	     500	     28405 ns/op
+BenchmarkRegexpBypass/CharExclude/pcre-8                   	   20000	       719 ns/op
+BenchmarkRegexpBypass/CharExclude/regexp2-8                	    2000	      6274 ns/op
+BenchmarkRegexpBypass/CharExclude/rust-8                   	    5000	      2606 ns/op
+
+Pattern: ^(.*)$
+BenchmarkRegexpBypass/RouterSlow/bypass-8                  	     500	     25224 ns/op
+BenchmarkRegexpBypass/RouterSlow/std-8                     	     500	     25486 ns/op
+BenchmarkRegexpBypass/RouterSlow/stddfa-8                  	     500	     29704 ns/op
+BenchmarkRegexpBypass/RouterSlow/pcre-8                    	   10000	      2126 ns/op
+BenchmarkRegexpBypass/RouterSlow/regexp2-8                 	    3000	      6142 ns/op
+BenchmarkRegexpBypass/RouterSlow/rust-8                    	   10000	      2416 ns/op
+
+Pattern: ^(.*)/index\.[a-z]{3}$
+BenchmarkRegexpBypass/RouterSlowFirstPass/bypass-8         	    1000	     24885 ns/op
+BenchmarkRegexpBypass/RouterSlowFirstPass/std-8            	    1000	     20593 ns/op
+BenchmarkRegexpBypass/RouterSlowFirstPass/stddfa-8         	    1000	     20422 ns/op
+BenchmarkRegexpBypass/RouterSlowFirstPass/glob-8           	     500	     31704 ns/op
+BenchmarkRegexpBypass/RouterSlowFirstPass/pcre-8           	    5000	      3049 ns/op
+BenchmarkRegexpBypass/RouterSlowFirstPass/regexp2-8        	    2000	      7958 ns/op
+BenchmarkRegexpBypass/RouterSlowFirstPass/rust-8           	    5000	      2354 ns/op
+
+Pattern: ^([^/]*)/index\.[a-z]{3}$
+BenchmarkRegexpBypass/RouterFastFirstPass/bypass-8         	     500	     33215 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPass/std-8            	     300	     35011 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPass/stddfa-8         	     500	     34666 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPass/pcre-8           	   20000	       840 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPass/regexp2-8        	    2000	      6158 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPass/rust-8           	    5000	      2723 ns/op
+
+Pattern: ^([^/]*)/index\.[a-z]{3}$
+BenchmarkRegexpBypass/RouterFastFirstPassN/bypass-8        	  200000	       103 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/std-8           	     500	     36012 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/stddfa-8        	     500	     39198 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/pcre-8          	    1000	     21429 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/regexp2-8       	     200	     81623 ns/op
+BenchmarkRegexpBypass/RouterFastFirstPassN/rust-8          	    5000	      2797 ns/op
 ```

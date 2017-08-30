@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// byPassOp is a custom Op understood by the byPassProgLinear matcher
+// byPassOp is a custom Op understood by the matchers
 type byPassOp uint8
 
 const (
@@ -20,18 +20,19 @@ const (
 	byPassOpAnyChar                               // [\w\W]
 )
 
-// byPassStep is a step in the matching algorithm of byPassProgLinear
+// byPassStep is a step in the matching algorithm
 type byPassStep struct {
-	op          byPassOp
-	classes     []rune // storage for byPassOpCharClass
-	literal     string // storage for byPassOpLiteral
-	char        rune   // storage for byPassOpNegativeCharClass
-	length      int    // number of Runes to match
-	minWidth    int    // minimum number of bytes
-	maxWidth    int    // maximum number of bytes, -1 if unknown
-	anchored    bool   // true if we are anchored from the beginning or from the end
-	anchorIndex int    // number of runes, can be negative if starting from the end
-
+	op             byPassOp
+	classes        []rune // storage for byPassOpCharClass
+	literal        string // storage for byPassOpLiteral
+	char           rune   // storage for byPassOpNegativeCharClass
+	length         int    // number of Runes to match
+	previousLength int    // number of Runes in previous steps
+	minWidth       int    // minimum number of bytes
+	maxWidth       int    // maximum number of bytes, -1 if unknown
+	minNextWidth   int    // minimum number of bytes needed to match from this step to the end of the pattern
+	anchored       bool   // true if we are anchored from the beginning or from the end
+	anchorIndex    int    // number of runes, can be negative if starting from the end
 }
 
 // byPassProg is the main interface we expose to the rest of the package.
@@ -42,8 +43,8 @@ type byPassProg interface {
 
 var notByPass byPassProg = nil
 
-// byPassProgLinear is the main matcher for fixed-size anchored patterns, or fixed-size single-step unanchored patterns
-type byPassProgLinear struct {
+// byPassProgAnchored is the main matcher for fixed-length anchored patterns
+type byPassProgAnchored struct {
 	steps         []*byPassStep // Steps to execute
 	anchoredBegin bool
 	anchoredEnd   bool
@@ -53,6 +54,14 @@ type byPassProgLinear struct {
 	maxWidth      int  // maximum number of bytes, -1 if unknown
 }
 
+// byPassProgUnanchored is the main matcher for fixed-length unanchored patterns
+type byPassProgUnanchored struct {
+	steps    []*byPassStep // Steps to execute
+	length   int           // number of Runes
+	minWidth int           // minimum number of bytes
+	maxWidth int           // maximum number of bytes, -1 if unknown
+}
+
 // byPassProgAlternate can match top-level alternations like `jpg|png`
 type byPassProgAlternate struct {
 	progs []byPassProg // one byPassProg for each part of the alternation
@@ -60,9 +69,13 @@ type byPassProgAlternate struct {
 
 // byPassProgFirstPass can match fixed-length prefixes and suffixes in a complex regexp (e.g. `^aa(c*)bb$`)
 type byPassProgFirstPass struct {
-	prefixProg *byPassProgLinear
-	suffixProg *byPassProgLinear
+	prefixProg *byPassProgAnchored
+	suffixProg *byPassProgAnchored
 	regexp     *Regexp // A new Regexp that matches the rest of the pattern after prefix & suffix were matched.
+}
+
+// byPassProgUnmatchable never matches anything
+type byPassProgUnmatchable struct {
 }
 
 // nextRunesWidth returns the number of bytes that encode the next `n` runes
@@ -117,15 +130,11 @@ func compileByPass(tree *syntax.Regexp) byPassProg {
 		return progalt
 	}
 
-	// Try to compile the regexp as a single fixed-size pattern
-	prog := &byPassProgLinear{}
+	// Try to compile the regexp as a single fixed-length pattern
+	// we don't know yet if it will be anchored or not
+	prog := &byPassProgAnchored{}
 
 	bailout := prog.traverseTree(tree)
-
-	// We only use bypass when we are sure not to need any backtracking
-	if !bailout && !prog.anchoredBegin && !prog.anchoredEnd && len(prog.steps) > 1 {
-		bailout = true
-	}
 
 	// In some cases we can still extract a fixed-length anchored prefix & suffix to run as first pass
 	if bailout && tree.Op == syntax.OpConcat && len(tree.Sub) > 1 {
@@ -146,8 +155,23 @@ func compileByPass(tree *syntax.Regexp) byPassProg {
 		return notByPass
 	}
 
+	if prog.unmatchable {
+		return &byPassProgUnmatchable{}
+	}
+
 	prog.computeWidth()
-	return prog
+
+	if prog.anchoredBegin || prog.anchoredEnd {
+		return prog
+	}
+
+	// Use an unanchored prog
+	return &byPassProgUnanchored{
+		steps:    prog.steps,
+		length:   prog.length,
+		minWidth: prog.minWidth,
+		maxWidth: prog.maxWidth,
+	}
 }
 
 // compileByPassPartialPrefix finds out if a fixed-length prefix can be extracted from the tree
@@ -155,11 +179,11 @@ func compileByPassPartialPrefix(firstpassprog *byPassProgFirstPass, tree *syntax
 
 	if tree.Sub[0].Op == syntax.OpBeginText {
 
-		prefixProg := &byPassProgLinear{}
+		prefixProg := &byPassProgAnchored{}
 		i := 0
 		validsteps := 0
 
-		// Find the longest fixed-length prefix supported by a byPassProgLinear
+		// Find the longest fixed-length prefix supported by a byPassProgAnchored
 		for ; i < len(tree.Sub); i++ {
 			if prefixProg.traverseTree(tree.Sub[i]) {
 				break
@@ -194,14 +218,14 @@ func compileByPassPartialSuffix(firstpassprog *byPassProgFirstPass, tree *syntax
 
 	if len(tree.Sub) > 1 && tree.Sub[len(tree.Sub)-1].Op == syntax.OpEndText {
 
-		suffixProg := &byPassProgLinear{}
+		suffixProg := &byPassProgAnchored{}
 		lastInvalid := 0
 
-		// Find the longest fixed-length suffix supported by a byPassProgLinear
+		// Find the longest fixed-length suffix supported by a byPassProgAnchored
 		for i := 0; i < len(tree.Sub); i++ {
 			// Reset the prog until we have a full suffix
 			if suffixProg.traverseTree(tree.Sub[i]) {
-				suffixProg = &byPassProgLinear{}
+				suffixProg = &byPassProgAnchored{}
 				lastInvalid = i
 			}
 		}
@@ -263,8 +287,8 @@ func compileParsed(re *syntax.Regexp, longest bool) (*Regexp, error) {
 	return regexp, nil
 }
 
-// traverseTree visits each node of the parsed regexp to detect fixed-size patterns
-func (prog *byPassProgLinear) traverseTree(tree *syntax.Regexp) (bailout bool) {
+// traverseTree visits each node of the parsed regexp to detect fixed-length patterns
+func (prog *byPassProgAnchored) traverseTree(tree *syntax.Regexp) (bailout bool) {
 
 	// TODO make sure other flag combinations can't be supported too
 	if tree.Flags != syntax.Perl && tree.Flags != syntax.POSIX && tree.Flags != syntax.Perl|syntax.WasDollar {
@@ -337,6 +361,7 @@ func (prog *byPassProgLinear) traverseTree(tree *syntax.Regexp) (bailout bool) {
 		step = &byPassStep{
 			op:       byPassOpNegativeCharClass,
 			char:     rune('\n'),
+			literal:  "\n",
 			length:   1,
 			minWidth: 1,
 			maxWidth: -1,
@@ -361,6 +386,7 @@ func (prog *byPassProgLinear) traverseTree(tree *syntax.Regexp) (bailout bool) {
 			step = &byPassStep{
 				op:       byPassOpNegativeCharClass,
 				char:     tree.Rune[1] + 1,
+				literal:  string(tree.Rune[1] + 1),
 				length:   1,
 				minWidth: 1,
 				maxWidth: -1,
@@ -376,8 +402,10 @@ func (prog *byPassProgLinear) traverseTree(tree *syntax.Regexp) (bailout bool) {
 		}
 
 	/*
+		case syntax.OpCapture:
+
 		case syntax.OpBeginLine, syntax.OpEndLine, syntax.OpAlternate, syntax.OpEmptyMatch,
-			 syntax.OpWordBoundary, syntax.OpNoWordBoundary, syntax.OpCapture,
+			 syntax.OpWordBoundary, syntax.OpNoWordBoundary,
 			 syntax.OpStar, syntax.OpPlus, syntax.OpQuest:
 			 return true
 	*/
@@ -389,6 +417,7 @@ func (prog *byPassProgLinear) traverseTree(tree *syntax.Regexp) (bailout bool) {
 
 	if step != nil {
 
+		// No more steps with length > 0 can be added after a $
 		if prog.anchoredEnd {
 			prog.unmatchable = true
 			return false
@@ -437,27 +466,35 @@ func (prog *byPassProgFirstPass) MatchString(s string) (matched bool) {
 
 }
 
-// computeWidth computes the byte length of a byPassProgLinear from its steps
-func (prog *byPassProgLinear) computeWidth() {
+func (prog *byPassProgUnmatchable) MatchString(s string) (matched bool) {
+	return false
+}
 
+// computeWidth computes the byte length of a byPassProgAnchored from its steps
+func (prog *byPassProgAnchored) computeWidth() {
+
+	previousLength := 0
 	prog.length = 0
 	for _, step := range prog.steps {
 		prog.length += step.length
 		prog.minWidth += step.minWidth
+		step.previousLength = previousLength
 		if step.maxWidth != -1 && prog.maxWidth != -1 {
 			prog.maxWidth += step.maxWidth
 		} else {
 			prog.maxWidth = -1
 		}
+		previousLength += step.length
+	}
+	minNextWidth := prog.minWidth
+	for _, step := range prog.steps {
+		step.minNextWidth = minNextWidth
+		minNextWidth -= step.minWidth
 	}
 
 }
 
-func (prog *byPassProgLinear) MatchString(s string) (matched bool) {
-
-	if prog.unmatchable {
-		return false
-	}
+func (prog *byPassProgAnchored) MatchString(s string) (matched bool) {
 
 	if len(s) < prog.minWidth {
 		return false
@@ -478,91 +515,35 @@ func (prog *byPassProgLinear) MatchString(s string) (matched bool) {
 	for _, step := range prog.steps {
 
 		end = len(s)
-		stepWidth = -2
 
 		// We don't have 0-length steps
 		if begin >= end {
 			return false
 		}
 
-		// If we are anchored, we can test a very narrow slice
-		if step.anchored {
-			// Anchored from the beginning
-			if step.anchorIndex >= 0 {
-				anchorWidth := nextRunesWidth(s, step.anchorIndex)
-				if anchorWidth < begin {
-					return false
-				}
-				begin = anchorWidth
-
-				// Anchored from the end
-			} else {
-				anchorWidth := lastRunesWidth(s, -step.anchorIndex)
-				if anchorWidth == -1 {
-					return false
-				}
-				begin = end - anchorWidth
+		// Anchored from the beginning
+		if step.anchorIndex >= 0 {
+			anchorWidth := nextRunesWidth(s, step.anchorIndex)
+			if anchorWidth < begin {
+				return false
 			}
-			stepWidth = nextRunesWidth(s[begin:], step.length)
-			end = begin + stepWidth
+			begin = anchorWidth
+
+			// Anchored from the end
+		} else {
+			anchorWidth := lastRunesWidth(s, -step.anchorIndex)
+			if anchorWidth == -1 {
+				return false
+			}
+			begin = end - anchorWidth
 		}
 
-		if stepWidth == -2 {
-			stepWidth = nextRunesWidth(s[begin:], step.length)
-		}
+		stepWidth = nextRunesWidth(s[begin:], step.length)
+		end = begin + stepWidth
 
-		switch step.op {
-		case byPassOpLiteral:
-
-			// In this case step.minWidth is always the expected width in bytes
-			if end-begin < step.minWidth {
-				return false
-			} else if end-begin == step.minWidth {
-				if s[begin:end] != step.literal {
-					return false
-				}
-			} else {
-				if !strings.Contains(s[begin:end], step.literal) {
-					return false
-				}
-			}
-
-		case byPassOpCharClass:
-			isInClass := false
-			for _, char := range s[begin:end] {
-				for i := 0; i < len(step.classes); i += 2 {
-					if step.classes[i] <= char && char <= step.classes[i+1] {
-						isInClass = true
-						break
-					}
-				}
-
-				if isInClass {
-					break
-				}
-			}
-
-			if !isInClass {
-				return false
-			}
-
-		case byPassOpNegativeCharClass:
-
-			// Find the first rune that is different
-			found := false
-			for _, char := range s[begin:end] {
-				if char != step.char {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-
-		case byPassOpAnyChar:
-			// nothing to do
-
+		// Test the contents of the slice
+		if !matchStepAnchored(step, s[begin:end]) {
+			return false
 		}
 
 		// go forward in the string
@@ -573,6 +554,188 @@ func (prog *byPassProgLinear) MatchString(s string) (matched bool) {
 	// If we are anchored to the end and didn't end at the exact end of the string, it's not a match
 	if prog.anchoredEnd && begin != len(s) && len(prog.steps) > 0 {
 		return false
+	}
+
+	return true
+
+}
+
+// findCharClass finds the first character in a string that belongs to a byPassOpCharClass
+func findCharClass(s string, step *byPassStep) (foundIndex int, matchingChar rune) {
+	for idx, char := range s {
+		for i := 0; i < len(step.classes); i += 2 {
+			if step.classes[i] <= char && char <= step.classes[i+1] {
+				return idx, char
+			}
+		}
+	}
+	foundIndex = -1
+	return
+}
+
+// matchCharInClasses checks if a character belongs to a byPassOpCharClass
+func matchCharInClasses(char rune, step *byPassStep) (matches bool) {
+	for i := 0; i < len(step.classes); i += 2 {
+		if step.classes[i] <= char && char <= step.classes[i+1] {
+			return true
+		}
+	}
+	return false
+}
+
+// findOtherChar finds the first character in a string that's different than a specific character
+func findOtherChar(s string, char rune) (foundIndex int, matchingChar rune) {
+	for idx, nextChar := range s {
+		if char != nextChar {
+			return idx, nextChar
+		}
+	}
+	foundIndex = -1
+	return
+}
+
+// matchStepAnchored matches a string slice as a whole against a byPassStep
+func matchStepAnchored(step *byPassStep, s string) (matched bool) {
+
+	switch step.op {
+	case byPassOpLiteral:
+
+		if s != step.literal {
+			return false
+		}
+
+	case byPassOpCharClass:
+
+		idx, _ := findCharClass(s, step)
+		if idx == -1 {
+			return false
+		}
+
+	case byPassOpNegativeCharClass:
+
+		if s == step.literal {
+			return false
+		}
+
+	case byPassOpAnyChar:
+		// nothing to do
+
+	}
+
+	return true
+}
+
+func (prog *byPassProgUnanchored) MatchString(s string) (matched bool) {
+
+	if len(s) < prog.minWidth {
+		return false
+	}
+
+	var nextRune rune
+	var nextWidth int
+
+	// Position in bytes in the string where we start testing the pattern
+	var cursor int
+
+byPassUnanchoredRestart:
+
+	// Width in bytes of the first rune at cursor
+	firstRuneWidth := 1
+
+	// Position in bytes in the string where we are testing the current step
+	begin := cursor
+
+	for stepn, step := range prog.steps {
+
+		// Do we already know we wont have enough bytes to match the rest of the pattern?
+		if begin+step.minNextWidth > len(s) {
+			return false
+		}
+
+		if step.op != byPassOpLiteral {
+			nextRune, nextWidth = utf8.DecodeRuneInString(s[begin:])
+
+			if stepn == 0 {
+				firstRuneWidth = nextWidth
+			}
+		}
+
+		switch step.op {
+		case byPassOpLiteral:
+
+			idx := strings.Index(s[begin:], step.literal)
+
+			switch idx {
+			case -1:
+				// Not found at all
+				return false
+			case 0:
+				// Found in the right place
+				if stepn == 0 {
+					firstRuneWidth = step.minWidth
+				}
+				begin += step.minWidth
+			default:
+				// Found later, we have to backtrack.
+				if stepn == 0 {
+					cursor = begin + idx
+					begin += idx + step.minWidth
+					firstRuneWidth = step.minWidth
+				} else {
+
+					if idx == 1 {
+						// In this special case we know the next rune had a width of 1 byte
+						cursor += 1
+					} else {
+						// TODO: the call to lastRunesWidth could be avoided in some cases
+						cursor = begin + idx - lastRunesWidth(s[cursor:begin+idx], step.previousLength)
+					}
+					goto byPassUnanchoredRestart
+				}
+			}
+
+		case byPassOpNegativeCharClass:
+
+			if nextRune != step.char {
+				begin += nextWidth
+			} else if stepn == 0 {
+
+				idx, char := findOtherChar(s[begin+nextWidth:], step.char)
+				if idx == -1 {
+					return false
+				}
+				firstRuneWidth = utf8.RuneLen(char)
+				cursor = begin + nextWidth + idx
+				begin += nextWidth + idx + firstRuneWidth
+
+			} else {
+				cursor += firstRuneWidth
+				goto byPassUnanchoredRestart
+			}
+
+		case byPassOpCharClass:
+
+			if matchCharInClasses(nextRune, step) {
+				begin += nextWidth
+			} else if stepn == 0 {
+				idx, matchingChar := findCharClass(s[begin+nextWidth:], step)
+
+				if idx == -1 {
+					return false
+				}
+				firstRuneWidth = utf8.RuneLen(matchingChar)
+				cursor = begin + nextWidth + idx
+				begin += nextWidth + idx + firstRuneWidth
+
+			} else {
+				cursor += firstRuneWidth
+				goto byPassUnanchoredRestart
+			}
+
+		case byPassOpAnyChar:
+
+			begin += nextWidth
+		}
 	}
 
 	return true
