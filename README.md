@@ -55,7 +55,7 @@ Supported total                                 27874 (36.51%)
  Supported with byPassProgUnmatchable           49 (0.06%)
 ```
 
-Note that the supported total will grow when we add support for capturing groups and multi-step unanchored patterns.
+Note: the supported total will grow to 55% when we add support for capturing groups.
 
 ## What is missing currently but could be done in the scope of this proposal
 
