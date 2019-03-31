@@ -65,7 +65,7 @@ func TestByPassGithubRegexps(t *testing.T) {
 
 		re, errb := Compile(line[0])
 		if errb != nil {
-			t.Errorf("Failed to compile in regexp-bypass but not in regexp: ", line[0])
+			t.Errorf("Failed to compile in regexp-bypass but not in regexp: %s", line[0])
 			continue
 		}
 
